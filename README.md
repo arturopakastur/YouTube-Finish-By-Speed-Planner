@@ -48,7 +48,7 @@ Other details:
 On a live stream the panel switches to catch-up mode. The stream keeps growing while you watch, so catching up takes `gap ÷ (speed − 1)`.
 
 - **Catch up within (optional)** takes a duration such as `10m`, `90s`, `1h 5m`, `5:30`, `1:30:00`, or a bare number (minutes). Leave it blank to catch up as fast as possible.
-- **Safe window** (20–600 s, default 30) is how far behind still counts as "live".
+- **Safe window** (default 30s) is how far behind in seconds still counts as "live."
 - The panel shows how far behind you are, the speed needed, when you'll be caught up, and how much of the stream you watch meanwhile.
 
 The script checks that the stream's live edge is really advancing before it shows a plan, so ended or stalled streams don't get a false catch-up plan.
