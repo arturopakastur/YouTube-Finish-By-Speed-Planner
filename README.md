@@ -2,12 +2,12 @@
 
 A userscript that tells you how fast to play a YouTube video so you finish it by a clock time you choose. On livestreams it works out how to catch up to the live edge instead. An optional Auto-set mode applies the plan to the player for you.
 
-Version 1.1.0 · License: CC0 1.0 (public domain) · By Arturopakastur & Claude
+Version 1.0.0 · License: CC0 1.0 (public domain) · By Arturopakastur & Claude
 
 ## Install
 
 1. Install a userscript manager such as Tampermonkey or Violentmonkey.
-2. Add `YouTube_Finish-By_Speed_Planner-1_1_0_user.js` to it (open the file, or paste it into a new script).
+2. Add `YouTube_Finish-By_Speed_Planner-1_0_0_user.js` to it (open the file, or paste it into a new script).
 3. Open any video on `youtube.com`.
 
 The script needs no special permissions (`@grant none`) and only runs on YouTube.
