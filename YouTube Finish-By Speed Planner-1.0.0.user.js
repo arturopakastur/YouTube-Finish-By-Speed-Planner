@@ -18,7 +18,7 @@
    * ------------------------------------------------------------------ */
   const CONFIG = {
     // Show the "Copy debug info" button in the livestream controls (and mention it in warnings).
-    // Set to true to show it or false to hide it completely.
+    // Set to false to hide it completely.
     showDebugButton: false,
   };
 
@@ -282,7 +282,7 @@
     // No saved value (first run) – or anything unreadable – means closed.
     hidden: store.get('hidden', true) !== false,
     catchBy: store.get('catchBy', ''),
-    safeWin: Math.min(600, Math.max(20, +store.get('safeWin', 30) || 30)),
+    safeWin: (() => { const v = Number(store.get('safeWin', 30)); return isFinite(v) && v >= 0 ? v : 30; })(),
     pos: store.get('pos', null),
   };
 
@@ -526,11 +526,11 @@
     el.catchBy.value = state.catchBy;
     el.catchBy.addEventListener('input', () => { state.catchBy = el.catchBy.value; store.set('catchBy', state.catchBy); update(); });
     el.catchHint = h('div', { class: 'hint' });
-    el.win = h('input', { type: 'number', min: '20', max: '600', step: '5' });
+    el.win = h('input', { type: 'number', min: '0', step: 'any' });
     el.win.value = state.safeWin;
     el.win.addEventListener('input', () => {
       const v = parseFloat(el.win.value);
-      if (isFinite(v) && v >= 20 && v <= 600) { state.safeWin = Math.round(v); store.set('safeWin', state.safeWin); update(); }
+      if (isFinite(v) && v >= 0) { state.safeWin = v; store.set('safeWin', state.safeWin); update(); }
     });
     el.win.addEventListener('change', () => { el.win.value = state.safeWin; });
 
