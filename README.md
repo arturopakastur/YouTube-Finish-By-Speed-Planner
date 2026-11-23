@@ -1,8 +1,8 @@
 # YouTube Finish-By Speed Planner
 
-A userscript that tells you how fast to play a YouTube video so you finish it by a clock time you choose. On livestreams it works out how to catch up to the live edge instead. An optional Auto-set mode applies the plan to the player for you.
+A userscript that tells you how fast to play a YouTube video so you finish it by a clock time you choose. On livestreams it reads the real live latency from "Stats for nerds" and works out how to catch up. An optional Auto-set mode applies the plan to the player for you.
 
-Version 1.0.0 · License: CC0 1.0 (public domain) · By Arturopakastur & Claude
+License: CC0 1.0 (public domain) · By Arturopakastur & Claude
 
 ## Install
 
@@ -45,11 +45,13 @@ Other details:
 
 ### Livestreams
 
-On a live stream the panel switches to catch-up mode. The stream keeps growing while you watch, so catching up takes `gap ÷ (speed − 1)`.
+On a live stream the panel switches to catch-up mode. The stream keeps growing while you watch, so catching up takes `gap ÷ (speed − 1)`. When available, the script reads the real live latency from "Stats for nerds" (and estimates it between readings) to show how far behind real time you are.
 
 - **Catch up within (optional)** takes a duration such as `10m`, `90s`, `1h 5m`, `5:30`, `1:30:00`, or a bare number (minutes). Leave it blank to catch up as fast as possible.
 - **Safe window** (default 30s) is how far behind in seconds still counts as "live."
-- The panel shows how far behind you are, the speed needed, when you'll be caught up, and how much of the stream you watch meanwhile.
+- **Max speed until the buffer runs out** (on by default) catches up at your max speed until you're live and the buffer ahead of you is used up (YouTube stalls to buffer, or only ~2.5s remain), then drops back to 1×.
+- **Desired latency (optional)** lets you specify a target number of seconds behind real time to stop at (must be below the safe window; ignored when buffer catch-up is ticked). Leave blank to stop once the player reports you're live.
+- The panel shows how far behind live you are, your buffer ahead, the speed needed, when you'll be caught up, and how much of the stream you watch meanwhile.
 
 The script checks that the stream's live edge is really advancing before it shows a plan, so ended or stalled streams don't get a false catch-up plan.
 
@@ -60,15 +62,20 @@ Tick **Auto-set speed** to have the script set the player speed for you, followi
 - It is **off by default**, and switches itself off whenever you open a different video or reload the page.
 - It never plays slower than 1×.
 - In Steady Pace it only speeds up (for example after a pause), never drifts back down. In Sprint Start it also drops to 1× when the sprint is done, and sprints again if you fall behind.
-- On livestreams it watches quietly and starts catching up only if you fall further behind than the safe window. It stops and returns to 1× once the player reports you're live.
+- On livestreams it watches quietly and starts catching up only if you fall further behind than the safe window. Depending on your settings, it stops and returns to 1× once the buffer runs out, your desired latency is reached, or the player reports you're live.
 - If you change the speed yourself, Auto-set pauses and shows a **Resume** button.
 - A small green dot on the ⏱ button shows that Auto-set is active.
 
 ## Settings
 
-The panel's inputs are saved in the page's `localStorage` under keys starting with `ytFinishBy:` (finish time, mode, max speed, catch-up time, safe window, panel position and state). Auto-set is never saved.
+The panel's inputs are saved in the page's `localStorage` under keys starting with `ytFinishBy:` (finish time, mode, max speed, catch-up time, safe window, buffer catch-up toggle, desired latency, panel position and state). Auto-set is never saved.
 
-At the top of the script, `CONFIG.showDebugButton` (default `false`) adds a **Copy debug info** button to the livestream controls. It copies raw player readings with no video ID, title or URL, which is handy for bug reports.
+At the top of the script, `CONFIG` lets you tweak a few options:
+
+- `showDebugButton` (default `false`): adds a **Copy debug info** button to the livestream controls that copies raw player readings (with no video ID, title, or URL) for bug reports.
+- `useLiveLatency` (default `true`): reads real live latency from "Stats for nerds" and uses it for "Behind live by" and safe-window checks.
+- `statsGraceSec` (default `5`): seconds to wait without a Stats for nerds reading while live before stopping a desired-latency catch-up.
+- `bufferLowSec` (default `2.5`): buffer threshold in seconds at which buffer-mode catch-up stops to avoid causing a stall.
 
 ## Notes
 
