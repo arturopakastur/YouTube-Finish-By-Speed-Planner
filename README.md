@@ -7,7 +7,7 @@ License: CC0 1.0 (public domain) · By Arturopakastur & Claude
 ## Install
 
 1. Install a userscript manager such as Tampermonkey or Violentmonkey.
-2. Add `YouTube Finish-By Speed Planner-1.2.0.user.js` to it (open the file, or paste it into a new script).
+2. Add `YouTube Finish-By Speed Planner-1.3.0.user.js` to it (open the file, or paste it into a new script).
 3. Open any video on `youtube.com`.
 
 The script needs no special permissions (`@grant none`) and only runs on YouTube.
