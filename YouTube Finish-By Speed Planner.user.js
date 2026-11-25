@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Finish-By Speed Planner
 // @namespace    https://youtube.com/
-// @version      1.3.1
+// @version      1.3.2
 // @license      CC0 1.0
 // @description  Enter a clock time you want to finish the current video by (or, on a livestream you're behind on, a catch-up time). Shows the playback speed needed (Steady Pace) or a "max speed first, then 1x" plan (Sprint Start). On livestreams it also reads the real live latency from "Stats for nerds" and uses it. Optional Auto-set mode applies the plan for you (off by default).
 // @author       Arturopakastur & Claude
@@ -32,6 +32,10 @@
     // "Max speed until the buffer runs out": it counts as fully caught up when YouTube stalls to buffer, or when the
     // buffer ahead of you falls to this many seconds (stopping a little early avoids causing the stall).
     bufferLowSec: 2.5,
+
+    // Livestreams: the "not live" status only appears after the stream has looked frozen/ended this many seconds
+    // in a row (until then it shows "live?" and the planner keeps assuming the stream goes on).
+    notLiveAfterSec: 120,
   };
 
   /* ------------------------------------------------------------------ *
@@ -346,7 +350,7 @@
   // lastLiveAt: when the player itself last reported live (the flag can blink; see update()).
   // stall.lastAt: when YouTube last stalled to buffer (video waiting for data while it should be playing)
   const stall = { lastAt: 0 };
-  const liveTrack = { vid: null, samples: {}, state: {}, lastTrue: {}, lastGoodAt: 0, lastLiveAt: 0, headOffset: null };
+  const liveTrack = { vid: null, samples: {}, state: {}, lastTrue: {}, lastGoodAt: 0, lastLiveAt: 0, notLiveSince: 0, headOffset: null };
 
   /* ------------------------------------------------------------------ *
    *  Finding things on the page (approach borrowed from SponsorBlock)
@@ -411,7 +415,7 @@
   }
   /** Track each source's live edge over time. Returns { sourceName: true | false | undefined } (latched). */
   function trackGrowth(vid, sources, now) {
-    if (liveTrack.vid !== vid) { liveTrack.vid = vid; liveTrack.samples = {}; liveTrack.lastTrue = {}; liveTrack.lastGoodAt = 0; liveTrack.lastLiveAt = 0; liveTrack.headOffset = null; }
+    if (liveTrack.vid !== vid) { liveTrack.vid = vid; liveTrack.samples = {}; liveTrack.lastTrue = {}; liveTrack.lastGoodAt = 0; liveTrack.lastLiveAt = 0; liveTrack.notLiveSince = 0; liveTrack.headOffset = null; }
     const state = {};
     for (const src of sources) {
       const arr = (liveTrack.samples[src.name] ||= []);
@@ -480,7 +484,7 @@
     const sk = safe(() => Array.from({ length: video.seekable.length }, (_, i) => [video.seekable.start(i), video.seekable.end(i)]));
     const txt = (sel) => safe(() => [...document.querySelectorAll(sel)].map((n) => n.textContent.trim()));
     return JSON.stringify({
-      script: '1.3.1',
+      script: '1.3.2',
       videoData: flags,
       progressState: ps && typeof ps === 'object' ? ps : String(ps),
       player: { getDuration: safe(() => pl.getDuration()), getCurrentTime: safe(() => pl.getCurrentTime()) },
@@ -812,10 +816,11 @@
   const setStats = (pairs) => {
     el.stats.replaceChildren(...pairs.flatMap(([a, b]) => [h('span', { text: a }), h('span', { text: b })]));
   };
-  // Header badge. With `time`, shows "<time> at <speed>" with only the speed in blue; without it, plain (blue) text.
-  const setBadge = (text, time) => {
-    el.badge.classList.toggle('split', !!time);
-    if (time) el.badge.replaceChildren(`${time} at `, h('span', { class: 'spd', text }));
+  // Header badge. With `info`, shows "<info> <speed>" with only the speed in blue; without it, plain (blue) text.
+  // `info` is ONE of: time until the video finishes / time until caught up to live / "(<latency> latency)".
+  const setBadge = (text, info) => {
+    el.badge.classList.toggle('split', !!info);
+    if (info) el.badge.replaceChildren(`${info} `, h('span', { class: 'spd', text }));
     else el.badge.textContent = text;
   };
   const showWarn = (msg, badge = '') => {
@@ -865,7 +870,7 @@
   function onVideoChange() {
     const wasApplied = auto.applied;
     auto.on = false; auto.overridden = false; auto.catching = false; auto.applied = false; resetAutoPlan();
-    liveTrack.vid = null; liveTrack.samples = {}; liveTrack.state = {}; liveTrack.lastTrue = {}; liveTrack.lastGoodAt = 0; liveTrack.lastLiveAt = 0; liveTrack.headOffset = null; stall.lastAt = 0;
+    liveTrack.vid = null; liveTrack.samples = {}; liveTrack.state = {}; liveTrack.lastTrue = {}; liveTrack.lastGoodAt = 0; liveTrack.lastLiveAt = 0; liveTrack.notLiveSince = 0; liveTrack.headOffset = null; stall.lastAt = 0;
     auto.resetOnPlay = wasApplied;
     if (el.autoToggle) el.autoToggle.checked = false;
     const v = getVideo();
@@ -984,8 +989,8 @@
       if (!gapShrank && !bufShrank) {
         const floorL = Lt;
         finishCatch(video, now, X !== null && !bufMode
-          ? `Auto-set: latency stopped improving at ~${fmtLat(Lt)} – back to 1×`
-          : `Auto-set: at the stream's live edge (~${fmtDur(Lt)} behind) – back to 1×`);
+          ? `Auto-set: latency stopped improving at ${fmtLat(Lt)} – back to 1×`
+          : `Auto-set: at the stream's live edge (${fmtDur(Lt)} behind) – back to 1×`);
         auto.floor = floorL;
       } else auto.prog = { t: now, L, buf };
     }
@@ -1030,7 +1035,7 @@
       }
       if (quietBlip) return;
       setStats([['Live stream', 'no position yet']]);
-      return showWarn('Can’t read a live position from the player (yet).' + DEBUG_HINT, 'live?');
+      return showWarn('Can’t read a live position from the player (yet).' + DEBUG_HINT);
     }
     const g = trackGrowth(auto.vid, sources, now);
 
@@ -1055,12 +1060,23 @@
     const off = useLat ? liveTrack.headOffset : null;
     const Lt = lat !== null ? lat : off !== null ? L + off : L;
     const latKind = lat !== null ? 'measured' : off !== null ? 'estimated' : 'unavailable';
-    const LtText = (latKind === 'estimated' ? '~' : '') + fmtLat(Lt);
+    const LtText = fmtLat(Lt);
 
     // Buffer ahead of you, and whether YouTube is stalling to buffer right now
     const buf = bufferAhead(video);
     const bufMode = state.bufferCatch && buf !== null;
     const liveNow = src.atHead !== null ? src.atHead : L <= Math.max(10, W / 2);   // does the player consider you at live?
+
+    // Header info when there is no full plan (live? / not live / bad catch-up time): at 1× or slower the latency,
+    // while speeding up the time until caught up (same gap as the plan uses: buffer left, gap to the target latency, or gap to the edge).
+    const noPlanInfo = (r) => {
+      if (!(r > 1.0001)) return `(${LtText} latency)`;
+      const Xraw = useLat ? parseDesired(state.desiredLat) : null;
+      const X = bufMode || (Xraw !== null && Xraw >= W) ? null : Xraw;
+      const useX = X !== null && (lat !== null || off !== null);
+      const gap = bufMode ? (liveNow ? Math.max(0, buf - CONFIG.bufferLowSec) : L) : useX ? Math.max(0, Lt - X) : L;
+      return fmtDur(gap / (r - 1));
+    };
 
     setStats([
       ['Stream start (vs live)', win !== null ? `−${fmtVid(win)}` : 'unknown'],
@@ -1076,15 +1092,29 @@
     // Second guard against false positives: the stream's edge must really be advancing in real time.
     if (!best) {
       if (quietBlip) return;
-      if (undecided) return showWarn('Checking that the stream is really live…', 'live?');
-      return showWarn('Flagged as live, but no position source is advancing (ended or stalled) – no catch-up plan.' + DEBUG_HINT, 'not live');
+      // "Not live" needs the stream to look frozen/ended continuously for CONFIG.notLiveAfterSec; a false "live" is harmless.
+      if (!undecided && !liveTrack.notLiveSince) liveTrack.notLiveSince = now;
+      const frozenSec = liveTrack.notLiveSince ? (now - liveTrack.notLiveSince) / 1000 : 0;
+      // Header: "(<latency> latency) 1.00×", or "<catch-up time> 2.00×" while speeding up; "not live" is added after the wait
+      const hdr = (tag) => { const r = video.playbackRate || 1; setBadge(tag ? `${fmtRate(r)} ${tag}` : fmtRate(r), noPlanInfo(r)); };
+      if (undecided || frozenSec < CONFIG.notLiveAfterSec) {
+        showWarn('Checking that the stream is really live…');
+        return hdr('');                                   // never shows "live?" in the header
+      }
+      showWarn('Flagged as live, but no position source has been advancing for a while (ended or stalled) – no catch-up plan.' + DEBUG_HINT);
+      return hdr('not live');
     }
 
+    liveTrack.notLiveSince = 0;
     liveTrack.lastGoodAt = now;
     const pd = parseDuration(state.catchBy);
     el.catchHint.textContent = pd.error ? pd.error : pd.value ? `→ within ${fmtDur(pd.value)}` : '';
     el.catchHint.classList.toggle('err', !!pd.error);
-    if (pd.error) return showWarn('Fix the catch-up time above (or clear it).');
+    if (pd.error) {
+      showWarn('Fix the catch-up time above (or clear it).');
+      const r0 = video.playbackRate || 1;
+      return setBadge(fmtRate(r0), noPlanInfo(r0));
+    }
     const D = pd.value;                                   // seconds, or null = as fast as possible
 
     // Desired latency: only meaningful with a latency yardstick (a reading, or an offset learned from an earlier one)
@@ -1096,7 +1126,7 @@
       : Xraw === null ? ''
       : bufMode ? 'Ignored while “Max speed until the buffer runs out” is ticked.'
       : X === null ? `Must be below the ${W}s safe window – ignored.`
-      : tooLow ? `Below this stream’s minimum latency (~${fmtLat(off)}) – speed-up will stop once it stops improving.`
+      : tooLow ? `Below this stream’s minimum latency (${fmtLat(off)}) – speed-up will stop once it stops improving.`
       : `→ stops at ${fmtLat(X)} behind real time`;
     el.desiredHint.classList.toggle('err', Date.now() < limitUntil || (Xraw !== null && !bufMode && (X === null || tooLow)));
 
@@ -1122,16 +1152,17 @@
     // At the speed you're playing right now (not the planned one). The gap only closes at (speed − 1) s per s.
     const nowPre = rate > 1.0001 ? fmtDur(G / (rate - 1)) : rate < 0.9999 ? 'falling behind' : 'never';
     const nowText = `${nowPre} at ${fmtRate(rate)}`;
-    let badgeTime = null;                                  // header shows the same "Time until caught up to live" value
-    // Header only: at 1× ("never") show how far behind live you are instead
-    const badgePre = nowPre === 'never' ? `never (${LtText} latency)` : nowPre;
+    // Header: ONE value. While you're speeding up toward live it is the time until caught up; otherwise
+    // (at 1× or slower, already at live, or "too slow") it is how far behind live you are.
+    const badgeTime = rate > 1.0001 && (lp.kind === 'max' || lp.kind === 'speed')
+      ? fmtDur(G / (rate - 1)) : `(${LtText} latency)`;
     const rows = (speed, t) => {
       out.push(row('Fully caught up at', fmtClock(now + t * 1000, now)));
       out.push(row('Time until caught up to live', nowText));
       out.push(row('Stream you watch meanwhile', fmtDur(speed * t)));
     };
     if (lp.kind === 'atlive') {
-      badge = 'live';
+      badge = fmtRate(rate);
       out.push(h('div', { class: 'big', text: 'At live' }));
       out.push(h('div', { class: 'sub', text: bufMode
         ? (Lt <= W ? `${LtText} behind – inside your ${W}s safe window.` : `${LtText} behind – buffer used up (${fmtLat(buf)} left).`)
@@ -1141,7 +1172,7 @@
           ? `The player says you're live (${LtText} behind).`
           : `${LtText} behind – inside your ${W}s safe window.` }));
     } else if (lp.kind === 'tooFast') {
-      badge = 'too slow';
+      badge = fmtRate(rate);
       out.push(h('div', { class: 'big bad', text: 'Not possible' }));
       out.push(h('div', { class: 'sub', text: effD > 0
         ? `Needs ${lp.exact.toFixed(2)}× to catch up in ${fmtDur(effD)} – above your ${fmtRate(cap)} max.`
@@ -1149,13 +1180,13 @@
       out.push(row(`Fastest (${fmtRate(cap)}) takes`, fmtDur(lp.tMin)));
       rows(cap, lp.tMin);
     } else if (lp.kind === 'max') {
-      badge = fmtRate(rate); badgeTime = badgePre;
+      badge = fmtRate(rate);
       out.push(h('div', { class: 'big', text: fmtRate(cap) }));
       out.push(h('div', { class: 'sub', text: `Fastest catch-up: ${fmtDur(lp.t)} to reach ${bufMode ? 'the end of the buffer' : useX ? fmtLat(X) + ' latency' : 'live'}.` }));
       out.push(row('Gap closes at', `${(cap - 1).toFixed(2)}× per second`));
       rows(cap, lp.t);
     } else { // 'speed'
-      badge = fmtRate(rate); badgeTime = badgePre;
+      badge = fmtRate(rate);
       out.push(h('div', { class: 'big', text: fmtRate(lp.speed) }));
       out.push(h('div', { class: 'sub', text: `Catches up in ${fmtDur(lp.t)} (target ${fmtDur(effD)}).` }));
       out.push(row('Exact speed needed', lp.exact.toFixed(4) + '×'));
@@ -1215,6 +1246,7 @@
     else if (liveTrack.vid === vid && now - liveTrack.lastLiveAt < 5000) kind = 'live';
     setModeUI(kind === 'live');
     if (kind === 'live') return updateLive(video, now);
+    liveTrack.notLiveSince = 0;
     if (!isFinite(video.duration)) { setStats([['Video', 'no fixed length']]); return showWarn('This video has no fixed length, so there is nothing to plan.'); }
 
     const ad = adOffset();                                // stitched-in ad seconds (0 if none)
@@ -1234,9 +1266,16 @@
       ...(kind === 'postlive' ? [['Note', 'post-live – length may change']] : []),
     ]);
 
-    if (parsed.error) return showWarn(state.target.trim() ? parsed.error : 'Enter a finish time above.');
     if (R <= 0.5) return showWarn('The video has finished.', 'done');
-    if (T <= 0) return showWarn('That deadline has already passed.', 'past');
+    if (parsed.error) {
+      // No (valid) finish time: still show "<time until video finish> at <speed>" in the header.
+      showWarn(state.target.trim() ? parsed.error : 'Enter a finish time above.');
+      return setBadge(fmtRate(rate), fmtDur(R / rate));
+    }
+    if (T <= 0) {
+      showWarn('That deadline has already passed.');
+      return setBadge(fmtRate(rate), fmtDur(R / rate));
+    }
 
     // --- the plan
     const p = plan(state.mode, R, T, state.cap);
@@ -1246,7 +1285,7 @@
     let badgeTime = null;
 
     if (p.kind === 'impossible') {
-      badge = 'too late';
+      badge = fmtRate(rate); badgeTime = finishTime;
       out.push(h('div', { class: 'big bad', text: 'Not possible' }));
       out.push(h('div', { class: 'sub', text: `Needs ${p.exact.toFixed(2)}×, above your ${fmtRate(p.cap)} max.` }));
       out.push(row(`Fastest (${fmtRate(p.cap)}) finishes`, fmtClock(now + (R / p.cap) * 1000, now)));
