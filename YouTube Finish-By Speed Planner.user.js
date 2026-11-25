@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         YouTube Finish-By Speed Planner
 // @namespace    https://youtube.com/
-// @version      1.3.2
+// @version      1.3.3
 // @license      CC0 1.0
 // @description  Enter a clock time you want to finish the current video by (or, on a livestream you're behind on, a catch-up time). Shows the playback speed needed (Steady Pace) or a "max speed first, then 1x" plan (Sprint Start). On livestreams it also reads the real live latency from "Stats for nerds" and uses it. Optional Auto-set mode applies the plan for you (off by default).
 // @author       Arturopakastur & Claude
@@ -34,7 +34,7 @@
     bufferLowSec: 2.5,
 
     // Livestreams: the "not live" status only appears after the stream has looked frozen/ended this many seconds
-    // in a row (until then it shows "live?" and the planner keeps assuming the stream goes on).
+    // in a row (until then the planner and Auto-set carry on as if the stream is live).
     notLiveAfterSec: 120,
   };
 
@@ -484,7 +484,7 @@
     const sk = safe(() => Array.from({ length: video.seekable.length }, (_, i) => [video.seekable.start(i), video.seekable.end(i)]));
     const txt = (sel) => safe(() => [...document.querySelectorAll(sel)].map((n) => n.textContent.trim()));
     return JSON.stringify({
-      script: '1.3.2',
+      script: '1.3.3',
       videoData: flags,
       progressState: ps && typeof ps === 'object' ? ps : String(ps),
       player: { getDuration: safe(() => pl.getDuration()), getCurrentTime: safe(() => pl.getCurrentTime()) },
@@ -1055,7 +1055,7 @@
     // Real latency from Stats for nerds (only readable while the player says you're live). Whenever it is, learn how far
     // the stream's edge itself lags real time; in between, estimate the latency from that. Lt = seconds behind real time.
     const useLat = CONFIG.useLiveLatency;
-    const lat = useLat && best ? readLiveLatency() : null;
+    const lat = useLat && (best || undecided) ? readLiveLatency() : null;
     if (useLat && best) liveTrack.headOffset = blendOffset(liveTrack.headOffset, lat, L);
     const off = useLat ? liveTrack.headOffset : null;
     const Lt = lat !== null ? lat : off !== null ? L + off : L;
@@ -1089,24 +1089,22 @@
       ...(useLat ? [['Latency source', latKind === 'measured' ? 'Stats for nerds' : latKind === 'estimated' ? 'estimated (last reading)' : 'not read yet']] : []),
     ]);
 
-    // Second guard against false positives: the stream's edge must really be advancing in real time.
+    // Is the stream's edge really advancing in real time? While that is still being checked (or looks stalled for less than
+    // CONFIG.notLiveAfterSec) the normal plan and Auto-set carry on, using the first position source: a false "live" is harmless.
+    // Only a stream that looks frozen/ended continuously for that long is declared "not live" and gets no plan.
     if (!best) {
       if (quietBlip) return;
-      // "Not live" needs the stream to look frozen/ended continuously for CONFIG.notLiveAfterSec; a false "live" is harmless.
       if (!undecided && !liveTrack.notLiveSince) liveTrack.notLiveSince = now;
       const frozenSec = liveTrack.notLiveSince ? (now - liveTrack.notLiveSince) / 1000 : 0;
-      // Header: "(<latency> latency) 1.00×", or "<catch-up time> 2.00×" while speeding up; "not live" is added after the wait
-      const hdr = (tag) => { const r = video.playbackRate || 1; setBadge(tag ? `${fmtRate(r)} ${tag}` : fmtRate(r), noPlanInfo(r)); };
-      if (undecided || frozenSec < CONFIG.notLiveAfterSec) {
-        showWarn('Checking that the stream is really live…');
-        return hdr('');                                   // never shows "live?" in the header
+      if (!undecided && frozenSec >= CONFIG.notLiveAfterSec) {
+        showWarn('Flagged as live, but no position source has been advancing for a while (ended or stalled) – no catch-up plan.' + DEBUG_HINT);
+        const r = video.playbackRate || 1;
+        return setBadge(`${fmtRate(r)} not live`, noPlanInfo(r));
       }
-      showWarn('Flagged as live, but no position source has been advancing for a while (ended or stalled) – no catch-up plan.' + DEBUG_HINT);
-      return hdr('not live');
+    } else {
+      liveTrack.notLiveSince = 0;
+      liveTrack.lastGoodAt = now;
     }
-
-    liveTrack.notLiveSince = 0;
-    liveTrack.lastGoodAt = now;
     const pd = parseDuration(state.catchBy);
     el.catchHint.textContent = pd.error ? pd.error : pd.value ? `→ within ${fmtDur(pd.value)}` : '';
     el.catchHint.classList.toggle('err', !!pd.error);
